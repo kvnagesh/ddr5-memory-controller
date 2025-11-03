@@ -1,47 +1,159 @@
-# DDR5 Protocol Layer Review vs AMD Integrated DDR5 Controller (PG456)
+# REVIEW: DDR5 Controller vs AMD Integrated DDR5 (PG456) — Action Plan to Match and Exceed
 
-This review compares the current `rtl/common/ddr5_protocol_layer.sv` against AMD PG456/UG1273/AM011 feature set for the Versal DDR5/LPDDR5/LPDDR5X Integrated Memory Controller. Status per feature is marked as: Fully Compliant (FC), Partially Compliant (PC), or Missing (M). Detailed step-by-step improvements are listed for each shortfall.
+Scope
+- Goal: Elevate this DDR5 controller to match and beat AMD PG456-class DDR5 controller capabilities (Versal DDR5/LPDDR5/X family) in bandwidth, latency, robustness, safety, debug, and testability.
+- Method: Per feature, provide concrete architecture recommendations and step-by-step action checklists. Where AMD specifies features, we target parity first, then exceed with deeper pipelining, smarter scheduling, telemetry, and resilience.
+- Evidence Base: Public AMD docs (PG456, UG1273-like summaries). No AMD proprietary details are included.
 
-References: PG456 Feature Summary; UG1273 DDR Controller overview; AM011 DDR5 Enhanced Memory Controller notes.
+Legend
+- Status: FC = Fully Compliant, PC = Partially Compliant, M = Missing (relative to PG456-class features)
 
-| Feature | AMD PG456 Expectation | Current Implementation Evidence | Status | Gaps | Step-by-step Improvements |
-|---|---|---|---|---|---|
-| Protocols / Config | DDR5 and LPDDR5/LPDDR5X; BL16 fixed; DFI ratio; component/SO/UDIMM | Parameter MEM_STD supports DDR5/LPDDR5/LPDDR5X; local BL param; DFI interface with ratio. | PC | Topology selection not surfaced; BL fixed not enforced in scheduler; no rank/slot handling. | 1) Add topo params: MODULE_TYPE (COMP, UDIMM, SODIMM), RANKS, SLOTS. 2) Enforce BL16 in command scheduler and data pipeline alignment. 3) Add timing tables per device type (1N/2N). 4) Validate DFI ratio constraints at compile-time and assert at run-time. |
-| Channels | Single and dual channel up to x16 each | Single instance; no explicit multi-channel fabric | M | No multi-channel instantiation or cross-channel arb. | 1) Wrap protocol layer in channel generator (N_CHANNELS param). 2) Add per-channel schedulers and a crossbar/onion bus. 3) Provide interleave policies (addr bit swizzle). 4) Expose AXI port mapping to channels with QoS classes. |
-| Data Width / ECC | Up to x32, or x40 for sideband ECC; inline ECC option; sideband 4/8-bit for DDR5 | Parameter DATA_BYTES and ENABLE_ECC=1, but no ECC datapath or syndrome | M | No SEC-CRC encode/decode, scrub, error injection | 1) Add ECC mode param: ECC_MODE={NONE, SIDEBAND4, SIDEBAND8, INLINE}. 2) Integrate SEC-CRC encoder on write, decoder on read with syndrome reporting. 3) Add error injection registers (per PG456). 4) Implement background and on-the-fly scrubbing FSM. 5) Wire error counters and logging (correctable/uncorrectable). |
-| Security / Encryption | AES-GCM/AES-XTS, hardware masking, XMPU-like access control | None visible | M | No crypto, no MPU | 1) Add optional encrypt/decrypt stage with AES-GCM/AES-XTS cores; select per region via key slot regs. 2) Add address-range protection unit (MPU) with R/W/X, secure attributes and AXI ID filters. 3) Side-channel masking enable for crypto data paths. 4) Key management registers with zeroize and versioning. |
-| RDIMM/Topology Features | Command/Addr parity (RDIMM), 1N/2N timing; dual-rank, dual-slot support | No RDIMM parity, ranks, or timing multiplier | M | No CA parity gen/check; no rank timing | 1) Add CA parity bit generation for RDIMM and parity error handling. 2) Add rank/slot abstraction in scheduler (open-page per rank, tFAW, tRRD_S/L constraints per DIMM). 3) Implement 1N/2N timing selection affecting command spacing. 4) MRS programming tables per topology. |
-| AXI Interface and Hazards | AXI4 ports, AXI ID ordering; RAW/WAW hazard checks; QoS classes | Front-end is custom mem_cmd_s; ENABLE_QOS=1 but unused; simple accept in IDLE; mentions AXI ordering but not implemented | M | No AXI interface; no ID ordering; no hazard checks | 1) Add AXI4 slave interface(s) with ID, burst, size, lock, qos. 2) Implement reorder buffers per ID with fences to preserve AXI ID ordering. 3) Add RAW/WAW/REF hazards: row/bank trackers, read-after-write forwarding or bubbles, write-drain policy. 4) Map AXI QoS to read/write classes (Isochronous/LL/BE) with queues and age/cut-through rules. |
-| Command Scheduler | Out-of-order scheduling for efficiency; QoS classes; write leveling for power/latency | Finite-state immediate issue; no OOO; have_cmd single-entry; timing placeholders | M | No bank machine, no tXX timing checks, no queues | 1) Implement bank machines (per bank group) with timing state (tRCD, tRP, tRAS, tRC, tCCD_S/L, tRRD_S/L, tFAW, tWTR, tRTW, tWR, tRTP). 2) Add per-class queues and OOO pickers (row-hit first with starvation prevention). 3) Add write-coalescing and write-drain thresholds to manage bus turnaround. 4) Enforce command spacing per 1N/2N and BL16. 5) Sim hooks for efficiency KPI (row-hit rate, turnaround, bandwidth). |
-| Calibration / Training | Enhanced calibration; write leveling, Vref, read gate; PHY handshakes | lvl/vref/gate req/ack hooks present; S_MRW training stage | PC | No training microcode, no timing to MRW sequences, no PHY-specific timing | 1) Add training micro-sequencer with per-standard scripts (DDR5, LPDDR5/X). 2) Implement MRW sequences with delays (tMOD, tMRD). 3) Track per-lane results and expose via status regs. 4) Add retry/timeout and error codes for failed training. 5) Drive DFI training opcodes/CS/CK gating as PHY requires. |
-| Refresh | 1x/2x/4x refresh for DDR5; 2x FGR; same-bank refresh; refresh management | S_REF state issues REF when requested; no scheduler-level management | M | No PB/SB refresh, no throttling or deferral | 1) Add refresh manager with counters supporting 1x/2x/4x and 2x FGR. 2) Implement same-bank refresh (DDR5) policy and integrate with bank machines to avoid conflicts. 3) Allow refresh deferral and pull-in within JEDEC windows with credit accounting. 4) Stats: refresh credits, deferrals, violations. |
-| Error Logging / Telemetry | Correctable/uncorrectable logs; counters; address capture | fatal_err_code hardwired 0x00 | M | No logging infra | 1) Add error log CSR block: CE/UE counters, last N events with address/bank/row/column, syndrome, source (ECC/Parity/CMD). 2) Add interrupt lines and mask registers. 3) Performance counters: bandwidth per class, latency histograms, queue depths. |
-| Data Bus Features (DBI/DM/CRC) | Data Mask, Dynamic Bus Inversion, CRC/ECC behaviors | Not present; write data placeholder | M | No DBI/DM handling | 1) Add DBI enable with per-byte inversion on write; reverse on read. 2) LPDDR5 DM support mapping from AXI strobe. 3) Ensure SEC-CRC/ECC interplay with DBI. |
-| Bandwidth/Latency | High efficiency; QoS; OOO; multi-port; turnaround optimization | Minimal FSM cannot reach high BW | M | Missing all perf mechanisms | 1) Implement read-write grouping, write drain thresholds. 2) Add speculative activate to hot rows. 3) Bank-group aware scheduling to avoid tCCD_L penalties. 4) AXI burst coalescing and address interleave. 5) Backpressure control to avoid head-of-line blocking. |
-| Testbench / Verification | Error injection; scrub; calibration coverage; traffic classes; compliance | No TB shown | M | No verification infra in repo file | 1) Build SV/UVM environment with AXI VIP, DFI/PHY model. 2) Add JEDEC timing checks and assertion library. 3) Provide ECC error injection tests, refresh corner cases, training timeouts. 4) Add coverage for QoS arbitration and hazard cases. |
-| Power/Clocking | Operates at half DRAM rate; power-down/self-refresh control | DFI_RATIO param; no power states | M | No power mgmt | 1) Implement power-down, self-refresh entry/exit sequences. 2) Clock gating for scheduler when idle. 3) Thermal throttling hooks. |
+Top-Level Architecture Actions (cross-cutting)
+- Introduce a multi-channel, bank-machine-based OOO scheduler with QoS classes, timing wheels, and performance counters.
+- Add AXI4 front-end with reorder buffers, ID-ordering per AXI spec, and class-based queues.
+- Implement full DDR5 timing database and per-bank/group timing trackers.
+- Add comprehensive ECC+logging, refresh manager, training sequencer, security/MPU, and DBI/Parity/DM.
+- Build UVM environment with coverage-driven verification and performance validation.
 
-Additional Detailed Notes
-- DFI Interface: The interface is present with ready/valid semantics; add explicit mapping to DFI 5.0 command fields (CS, ACT_n, RAS/CAS/WE equivalents via CA encoding) and timing for tCMD and 1N/2N.
-- Initialization: S_INIT→S_MRW gating exists; expand with JEDEC DDR5 init: reset, CKE sequence, MR writes order, ZQCAL, tZQinit, DRAM Vref training, WCK training for LPDDR5/X.
-- Address Mapping: Add user-configurable address map (row/col/bank/bank-group/channel) to maximize bank parallelism and align with DIMM topology.
-- Safety/FUSA: If targeting AMD DDRMC5E-like feature set, add safety monitors, diagnostic test modes, parity coverage, and error pinouts.
+1) Protocol, Configuration, Topology [Status: PC]
+Action checklist
+- Add parameters: MEM_STD{DDR5,LPDDR5,LPDDR5X}, MODULE_TYPE{COMP,UDIMM,SODIMM,RDIMM}, RANKS, SLOTS, DFI_RATIO, BL=16 enforced.
+- Create device/topology timing profile tables (1N/2N, rank-to-rank, DIMM-specific tFAW/tRRD_S/L).
+- Provide address map configurability (row/col/bank/bank-group/channel) with presets for DIMMs to maximize parallelism.
+- Build CSR block to select profiles and lock with a “config committed” bit.
 
-Implementation Plan (Phased)
-1) Infrastructure: AXI4 front-end, CSR/IPIF block, register map, clock/reset/power states.
-2) Bank Machines and Timers: JEDEC timing database and per-bank state. Add OOO arbiter and QoS.
-3) ECC + Logging: Integrate SEC-CRC engines, logs, interrupts, injection, scrub.
-4) Refresh Manager: PB/SB, FGR, deferral, telemetry.
-5) Training Sequencer: Scripts, retries, PHY hooks, status.
-6) Security: AES-GCM/XTS data path, MPU, keys.
-7) DBI/DM/Parity: Bus features; RDIMM parity.
-8) Performance Tuning: Write drain, grouping, speculative activate, interleave.
-9) Verification: UVM testbench, checkers, coverage, regressions.
+2) AXI Interface, Ordering, Hazards, QoS [Status: M]
+Architecture
+- AXI4 slave ports: up to N ports, each with ID space and QoS field; optional cache/region hints.
+- Reorder buffers per ID to enforce ID-ordering; global OOO across IDs allowed.
+- Class-based ingress queues: Isochronous (Iso), Low-Latency (LL), Best-Effort (BE); starvation prevention via aging.
+- Hazard tracking: row/bank trackers, RAW/WAW detection, read-after-write forwarding buffer.
+Action checklist
+- Implement AXI4 port(s) with full signals (AW/AR/W/R/B), bursts up to 256 beats, narrow/wide handling.
+- Build ID-to-ROB allocation; introduce fence/Barrier recognition (AWBAR/ARBAR via sideband CSR if needed).
+- Map AXI QoS to classes; implement age-based priority lift and queue depth watermarks.
+- Add write-combine and write-drain policies; expose knobs via CSR (low/high thresholds, hysteresis).
+- Provide backpressure control to avoid HoL blocking; implement credits towards scheduler.
+- Add protocol checkers and assertions for AXI ordering and response codes.
 
-Summary
-- Current file establishes a portable, parameterized skeleton with DFI hooks and basic state flow (good foundation) but lacks most of PG456 production features. The improvement plan above brings it to parity with AMD DDR5 controller capabilities in stages.
+3) Command Scheduler, OOO, Timing Engine [Status: M]
+Architecture
+- Per-bank machine (PBM) per bank, grouped by bank-group for tCCD_S/L awareness.
+- Timing engine with token/timer wheels that enforce tRCD,tRAS,tRC,tRP,tCCD_S/L,tRRD_S/L,tFAW,tWTR,tRTW,tWR,tRTP,tRFC,tREFI, 1N/2N.
+- Row-policy: open-page row-hit-first with anti-starvation; speculative ACT for hot rows.
+Action checklist
+- Implement PBMs with state: closed/open row, timers, pending ops.
+- Add global picker: prioritize row-hits, then aged LL/Iso, then BE; respect bank-group penalties.
+- Add speculative ACT: track hot rows by history table; cancel if conflict or window expires.
+- Enforce BL16 alignment in data pipeline and cmd spacing.
+- Expose knobs: row-hit bias %, max queue age, speculative window, write-drain threshold, grouping size.
+
+4) Refresh Management (All Types) [Status: M]
+Architecture
+- Central refresh manager with counters for 1x/2x/4x refresh; fine granularity refresh (FGR 2x) and same-bank refresh (SBR) for DDR5.
+- Deferral/pull-in within JEDEC windows using credit accounting; coordinate with PBMs to minimize interruptions.
+Action checklist
+- Implement PB/SB refresh support; select SBR where beneficial to limit impact to active banks.
+- Integrate refresh requests with scheduler: preemptible windows, refuse when harmful, re-issue with credits.
+- Track stats: deferrals, pull-ins, violations; expose via CSRs and interrupts.
+
+5) Calibration / Training [Status: PC]
+Architecture
+- Training micro-sequencer running scripts for write leveling, read gate, read/write Vref, WCK/CK alignment (LPDDR5/X as applicable), with PHY handshakes.
+Action checklist
+- Implement sequencer with MRW programming and timed waits (tMOD,tMRD,tDLLK,tZQinit).
+- Per-lane result capture; retry with bounded attempts; error codes on failure.
+- DFI training opcodes and CS/CK gating as required by PHY; expose progress/status.
+
+6) ECC, CRC, Scrubbing, Logging [Status: M]
+Architecture
+- Modes: ECC_MODE{NONE, SIDEBAND4, SIDEBAND8, INLINE}. SEC-DED with optional CRC or SEC-CRC per data slice.
+- Background scrubber and on-access correction; error injection framework.
+Action checklist
+- Integrate encoder on write path and decoder on read path; surface syndrome, CE/UE flags.
+- Implement error log RAM (ring): timestamp, addr, bank/row/col, syndrome, source; CE/UE counters.
+- Add interrupt/mask and “first-fail capture.”
+- Add scrub FSM with bandwidth cap; track scrub coverage and rates.
+
+7) Data Bus Features: DBI/DM/Parity [Status: M]
+Action checklist
+- Implement write DBI generation per byte; read DBI reverse; ensure ECC interworking.
+- LPDDR5 DM handling from AXI WSTRB; parity generation/check for RDIMM CA.
+- Add CA parity error reporting, counters, and fault policy (retry/log/interrupt).
+
+8) RDIMM/Topology, 1N/2N, Ranks/Slots [Status: M]
+Action checklist
+- Implement rank/slot models: per-rank timing offsets, rank-to-rank switching penalties.
+- 1N/2N timing multiplier selection impacting cmd spacing.
+- MRS tables per topology with safe presets and overrides.
+
+9) Power Management and Thermal Hooks [Status: M]
+Action checklist
+- Implement self-refresh and power-down entry/exit sequences with JEDEC timing.
+- Idle clock gating of scheduler and front-end; light/deep power states policy.
+- Thermal throttling hooks via CSR (reduce issue rate, cap bandwidth) and sensors input.
+
+10) Security: Encryption and MPU [Status: M]
+Action checklist
+- Optional AES-GCM/AES-XTS datapaths selectable per region; key slots with zeroize.
+- XMPU-like address-range protection with R/W/X, secure/non-secure, AXI ID filters, violation logging.
+- Side-channel masking option for crypto blocks; performance counters for crypto stalls.
+
+11) Performance Targets and Exceeding AMD
+Targets
+- Bandwidth: ≥95% of theoretical with mixed traffic; ≥98% for streaming.
+- Latency: minimize 50th/95th percentiles for LL class; bounded tail.
+Exceed strategies
+- Deeper pipelining in front-end and scheduler to accept ≥2 cmds/cycle under load.
+- Bank-group-aware reordering to avoid tCCD_L penalties; speculative ACT with correctness guards.
+- Smarter write-drain with dynamic thresholds and look-ahead based on read arrival predictions.
+- Burst coalescing at AXI layer; adaptive interleave across channels/banks using address swizzle.
+- Rich telemetry: per-class bandwidth, latency histograms, row-hit ratio, turnaround counters; feedback-driven tuning.
+
+12) Debuggability, Telemetry, and Testability [Status: M]
+Action checklist
+- Add comprehensive counters: issued/served per class, queue depth histos, timing stall reasons, refresh impact, write-drain events, speculative success rate.
+- Event trace FIFO with triggers (e.g., latency > threshold, ECC UE) and time-stamping.
+- CSR readout with snapshot/clear mechanisms; firmware driver examples.
+- Built-in self-test modes: pattern generators, loopback, error-injection toggles.
+
+13) Verification (UVM) [Repo has uvm_tb — strengthen to coverage goals] [Status: PC]
+Planned environment
+- Agents: AXI VIP, DFI/PHY model, Error injector, Thermal/power hooks.
+- Scoreboard: functional, timing compliance; performance scoreboards for BW/latency vs model.
+Action checklist
+- Complete sequences: QoS arbitration, OOO reordering, hazards (RAW/WAW), refresh deferral/pull-in, ECC CE/UE, DBI/DM, CA parity, training retries, security violations.
+- Add SVA: JEDEC timing (all tXX), AXI ordering, ECC correctness, refresh windows, power-state sequencing.
+- Coverage goals: Code>95%, Functional>98%, Assertions=100%, Perf bins covering bandwidth/latency/turnaround regimes.
+- Regression tiers: sanity, feature, stress, perf, power/refresh, security, error-injection.
+
+14) Interfaces to PHY (DFI 5.x alignment) [Status: PC]
+Action checklist
+- Explicit mapping of scheduler outputs to DFI CA/CS/ACT_n encodings and data strobes; 1N/2N timing.
+- Lane repair hooks; training status handshake; DFI status/error propagation to logs.
+
+15) Firmware/CSR Map [Status: M]
+Action checklist
+- Define CSR map: config profiles, QoS knobs, write-drain thresholds, speculative enable, refresh credits, ECC logs, perf counters, interrupts, security/MPU, scrub controls, thermal throttles.
+- Provide Linux driver/HAL examples and perf tools for telemetry.
+
+Phased Implementation Plan
+- Phase 0: CSR/IPIF, address map, basic AXI shell; compile-time timing tables; BL16 enforcement.
+- Phase 1: PBMs + timing engine + OOO picker + QoS queues; minimal counters.
+- Phase 2: ECC/SEC-DED + logging + interrupts + error injection + scrubber.
+- Phase 3: Refresh manager (PB/SB/FGR) + deferral/pull-in + telemetry; power states.
+- Phase 4: Training micro-sequencer + PHY hooks + robust status + retries.
+- Phase 5: Security (AES-GCM/XTS) + MPU + key mgmt; DBI/DM + RDIMM CA parity.
+- Phase 6: Performance tuning (speculative ACT, dynamic write-drain, interleave) + deep counters + event trace.
+- Phase 7: Verification expansion to full coverage with perf scoreboards and regressions.
+
+Acceptance and Success Metrics
+- Functional parity with AMD feature list; all timing SVA clean on random and stressed traffic.
+- Perf: Streaming BW ≥98% theoretical; mixed BW ≥95%; LL P95 latency improved ≥10% vs baseline.
+- Resilience: ECC CE/UE handling verified; refresh deferral without violations; security violations logged and contained.
+- Debug: Telemetry usable to root-cause issues within 10 minutes under lab conditions.
 
 References
-- AMD PG456 Integrated DDR5/LPDDR5/5X Memory Controller, Feature Summary.  
-- UG1273 DDR Controller overview (Versal).  
-- AM011 TRM DDR5 Enhanced Memory Controller notes.
+- AMD PG456 Integrated DDR5/LPDDR5/LPDDR5X Memory Controller (feature summary, public docs).
+- AMD/Versal DDR Controller overviews (UG-class docs).
+- JEDEC DDR5/LPDDR5 specifications for timing definitions.
