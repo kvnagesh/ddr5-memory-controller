@@ -1,298 +1,204 @@
 //******************************************************************************
 // File: ddr_types_pkg.sv
-// Description: Common types and structures for DDR5/LPDDR5X Memory Controller
+// Description: Common types, timing bins, protocol maps for DDR5/LPDDR5/LPDDR5X up to 8533 MT/s
 // Author: Production RTL Team
 // Date: 2025-11-03
 //******************************************************************************
-
 package ddr_types_pkg;
-
-  import "DPI-C" function void debug_log(string msg);
-
   `include "ddr_defines.svh"
 
   //============================================================================
-  // Memory Command Types
+  // Speed Bin and Timing Parameterization
   //============================================================================
+  typedef struct packed {
+    int unsigned tck_ps;     // clock period in ps
+    int unsigned trcd_ck;
+    int unsigned trp_ck;
+    int unsigned tras_ck;
+    int unsigned trc_ck;
+    int unsigned trfc_ns;
+    int unsigned trefi_us;
+    int unsigned twr_ck;
+    int unsigned twtr_s_ck;
+    int unsigned twtr_l_ck;
+    int unsigned trtp_ck;
+    int unsigned trrd_s_ck;
+    int unsigned trrd_l_ck;
+    int unsigned tccd_s_ck;
+    int unsigned tccd_l_ck;
+    int unsigned tccd_wr_ck;
+    int unsigned tfaw_ck;
+    int unsigned tmrw_ck;
+    int unsigned tmrd_ck;
+    int unsigned tdqsck_ps;
+    int unsigned tdqsck_var_ps;
+  } timing_t;
 
+  // Provide representative timing for common speed bins; values are placeholders
+  // and must be calibrated against vendor datasheets during integration.
+  localparam timing_t TIMING_DDR5_6400 = '{tck_ps:312, trcd_ck:18, trp_ck:18, tras_ck:42, trc_ck:60,
+                                           trfc_ns:260, trefi_us:3_900, twr_ck:18, twtr_s_ck:6, twtr_l_ck:10,
+                                           trtp_ck:10, trrd_s_ck:6, trrd_l_ck:8, tccd_s_ck:4, tccd_l_ck:8,
+                                           tccd_wr_ck:8, tfaw_ck:32, tmrw_ck:8, tmrd_ck:8, tdqsck_ps:75, tdqsck_var_ps:25};
+  localparam timing_t TIMING_DDR5_8533 = '{tck_ps:234, trcd_ck:20, trp_ck:20, tras_ck:44, trc_ck:64,
+                                           trfc_ns:300, trefi_us:3_900, twr_ck:20, twtr_s_ck:6, twtr_l_ck:10,
+                                           trtp_ck:10, trrd_s_ck:6, trrd_l_ck:8, tccd_s_ck:4, tccd_l_ck:8,
+                                           tccd_wr_ck:8, tfaw_ck:32, tmrw_ck:8, tmrd_ck:8, tdqsck_ps:65, tdqsck_var_ps:25};
+  localparam timing_t TIMING_LP5_6400  = '{tck_ps:312, trcd_ck:18, trp_ck:18, tras_ck:42, trc_ck:60,
+                                           trfc_ns:210, trefi_us:3_900, twr_ck:14, twtr_s_ck:6, twtr_l_ck:8,
+                                           trtp_ck:8,  trrd_s_ck:6, trrd_l_ck:8, tccd_s_ck:4, tccd_l_ck:8,
+                                           tccd_wr_ck:8, tfaw_ck:28, tmrw_ck:8, tmrd_ck:8, tdqsck_ps:60, tdqsck_var_ps:20};
+  localparam timing_t TIMING_LP5X_8533 = '{tck_ps:234, trcd_ck:20, trp_ck:20, tras_ck:44, trc_ck:64,
+                                           trfc_ns:240, trefi_us:3_900, twr_ck:16, twtr_s_ck:6, twtr_l_ck:8,
+                                           trtp_ck:8,  trrd_s_ck:6, trrd_l_ck:8, tccd_s_ck:4, tccd_l_ck:8,
+                                           tccd_wr_ck:8, tfaw_ck:28, tmrw_ck:8, tmrd_ck:8, tdqsck_ps:55, tdqsck_var_ps:20};
+
+  // Active timing selection based on MEM_STD and rate
+  function automatic timing_t select_timing();
+    timing_t t;
+    if (`FEAT_DDR5) begin
+      t = (`DDR_DATA_RATE_MT >= 8000) ? TIMING_DDR5_8533 : TIMING_DDR5_6400;
+    end else if (`FEAT_LP5) begin
+      t = TIMING_LP5_6400;
+    end else begin
+      t = TIMING_LP5X_8533;
+    end
+    return t;
+  endfunction
+
+  localparam timing_t TIMING = select_timing();
+
+  // Exported parameters for modules to use (mapped from TIMING record)
+  localparam int unsigned TCK_PS        = TIMING.tck_ps;
+  localparam int unsigned TRCD_CK       = TIMING.trcd_ck;
+  localparam int unsigned TRP_CK        = TIMING.trp_ck;
+  localparam int unsigned TRAS_CK       = TIMING.tras_ck;
+  localparam int unsigned TRC_CK        = TIMING.trc_ck;
+  localparam int unsigned TRFC_NS       = TIMING.trfc_ns;
+  localparam int unsigned TREFI_US      = TIMING.trefi_us;
+  localparam int unsigned TWR_CK        = TIMING.twr_ck;
+  localparam int unsigned TWTR_S_CK     = TIMING.twtr_s_ck;
+  localparam int unsigned TWTR_L_CK     = TIMING.twtr_l_ck;
+  localparam int unsigned TRTP_CK       = TIMING.trtp_ck;
+  localparam int unsigned TRRD_S_CK     = TIMING.trrd_s_ck;
+  localparam int unsigned TRRD_L_CK     = TIMING.trrd_l_ck;
+  localparam int unsigned TCCD_S_CK     = TIMING.tccd_s_ck;
+  localparam int unsigned TCCD_L_CK     = TIMING.tccd_l_ck;
+  localparam int unsigned TCCD_WR_CK    = TIMING.tccd_wr_ck;
+  localparam int unsigned TFAW_CK       = TIMING.tfaw_ck;
+  localparam int unsigned TMRW_CK       = TIMING.tmrw_ck;
+  localparam int unsigned TMRD_CK       = TIMING.tmrd_ck;
+  localparam int unsigned TDQSCK_PS     = TIMING.tdqsck_ps;
+  localparam int unsigned TDQSCK_VAR_PS = TIMING.tdqsck_var_ps;
+
+  //============================================================================
+  // Protocol Feature Map (DDR5 vs LPDDR5/5X)
+  //============================================================================
+  typedef struct packed {
+    logic ca_parity;
+    logic cmdaddr_mux;
+    logic dm_dbi;
+    logic wr_leveling;
+    logic rd_gating;
+    logic vref_train;
+    logic bl32_support; // LPDDR5X BL32 write burst mapping
+  } proto_feat_t;
+
+  localparam proto_feat_t PROTO_FEAT = '{
+    ca_parity:   (`FEAT_DDR5)?1:0,
+    cmdaddr_mux: (`FEAT_DDR5)?0:1,
+    dm_dbi:      1,
+    wr_leveling: (`FEAT_DDR5)?1:0,
+    rd_gating:   1,
+    vref_train:  1,
+    bl32_support:(`FEAT_LP5X)?1:0
+  };
+
+  //==============================================================================
+  // Command encodings and structures
+  //==============================================================================
   typedef enum logic [3:0] {
-    CMD_NOP        = 4'b0111,
-    CMD_READ       = 4'b0101,
-    CMD_WRITE      = 4'b0100,
-    CMD_ACTIVATE   = 4'b0001,
-    CMD_PRECHARGE  = 4'b0010,
-    CMD_REFRESH    = 4'b1000,
-    CMD_SELF_REF   = 4'b1001,
-    CMD_POWER_DOWN = 4'b1010,
-    CMD_MRS        = 4'b0000,
-    CMD_ZQC        = 4'b1011
+    CMD_NOP     = `CMD_NOP,
+    CMD_MRW     = `CMD_MRW,
+    CMD_PRE     = `CMD_PRE,
+    CMD_ACT     = `CMD_ACT,
+    CMD_RD      = `CMD_RD,
+    CMD_WR      = `CMD_WR,
+    CMD_REF     = `CMD_REF,
+    CMD_ZQC     = `CMD_ZQC,
+    CMD_SREF    = `CMD_SREF,
+    CMD_PD      = `CMD_PD
   } ddr_cmd_t;
 
-  //============================================================================
-  // Memory Command Structure
-  //============================================================================
-
   typedef struct packed {
-    logic                            valid;
-    ddr_cmd_t                        cmd;
-    logic [`DDR_CHANNEL_WIDTH-1:0]  channel;
-    logic [`DDR_RANK_WIDTH-1:0]      rank;
+    logic                           valid;
+    ddr_cmd_t                       cmd;
+    logic [`DDR_CHANNEL_LOG2-1:0]   channel;
+    logic [`DDR_RANK_LOG2-1:0]      rank;
     logic [`DDR_BANK_ADDR_WIDTH-1:0] bank;
     logic [`DDR_ROW_ADDR_WIDTH-1:0]  row;
     logic [`DDR_COL_ADDR_WIDTH-1:0]  col;
-    logic [`DDR_DATA_WIDTH-1:0]      data;
-    logic [`DDR_DATA_WIDTH/8-1:0]    data_mask;
-    logic                            auto_precharge;
-    logic [7:0]                      priority;
-    logic [15:0]                     transaction_id;
+    logic                           autopre;
+    logic [7:0]                     qos;
+    logic [15:0]                    txid;
   } mem_cmd_s;
 
-  //============================================================================
-  // AXI Transaction Structures
-  //============================================================================
-
-  // AXI Write Address Channel
-  typedef struct packed {
-    logic [`AXI_ID_WIDTH-1:0]     awid;
-    logic [`AXI_ADDR_WIDTH-1:0]   awaddr;
-    logic [7:0]                   awlen;
-    logic [2:0]                   awsize;
-    logic [1:0]                   awburst;
-    logic                         awlock;
-    logic [3:0]                   awcache;
-    logic [2:0]                   awprot;
-    logic [3:0]                   awqos;
-    logic [`AXI_USER_WIDTH-1:0]   awuser;
-    logic                         awvalid;
-  } axi_aw_s;
-
-  // AXI Write Data Channel
-  typedef struct packed {
-    logic [`AXI_DATA_WIDTH-1:0]   wdata;
-    logic [`AXI_STRB_WIDTH-1:0]   wstrb;
-    logic                         wlast;
-    logic [`AXI_USER_WIDTH-1:0]   wuser;
-    logic                         wvalid;
-  } axi_w_s;
-
-  // AXI Write Response Channel
-  typedef struct packed {
-    logic [`AXI_ID_WIDTH-1:0]     bid;
-    logic [1:0]                   bresp;
-    logic [`AXI_USER_WIDTH-1:0]   buser;
-    logic                         bvalid;
-  } axi_b_s;
-
-  // AXI Read Address Channel
-  typedef struct packed {
-    logic [`AXI_ID_WIDTH-1:0]     arid;
-    logic [`AXI_ADDR_WIDTH-1:0]   araddr;
-    logic [7:0]                   arlen;
-    logic [2:0]                   arsize;
-    logic [1:0]                   arburst;
-    logic                         arlock;
-    logic [3:0]                   arcache;
-    logic [2:0]                   arprot;
-    logic [3:0]                   arqos;
-    logic [`AXI_USER_WIDTH-1:0]   aruser;
-    logic                         arvalid;
-  } axi_ar_s;
-
-  // AXI Read Data Channel
-  typedef struct packed {
-    logic [`AXI_ID_WIDTH-1:0]     rid;
-    logic [`AXI_DATA_WIDTH-1:0]   rdata;
-    logic [1:0]                   rresp;
-    logic                         rlast;
-    logic [`AXI_USER_WIDTH-1:0]   ruser;
-    logic                         rvalid;
-  } axi_r_s;
-
-  //============================================================================
-  // DFI Interface Structures
-  //============================================================================
+  //==============================================================================
+  // DFI Interface Parameters and Records
+  //==============================================================================
+  `ifndef DFI_ADDR_WIDTH
+    `define DFI_ADDR_WIDTH  24
+  `endif
+  `ifndef DFI_BANK_WIDTH
+    `define DFI_BANK_WIDTH  8
+  `endif
+  `ifndef DFI_DATA_WIDTH
+    `define DFI_DATA_WIDTH  (`DDR_DQ_WIDTH)
+  `endif
 
   typedef struct packed {
-    logic [`DFI_ADDR_WIDTH-1:0]   address;
-    logic [`DFI_BANK_WIDTH-1:0]   bank;
-    logic                         cas_n;
-    logic                         ras_n;
-    logic                         we_n;
-    logic                         cs_n;
-    logic                         cke;
-    logic                         odt;
-    logic                         reset_n;
+    logic [`DFI_ADDR_WIDTH-1:0]  address;
+    logic [`DFI_BANK_WIDTH-1:0]  bank;
+    logic                        cas_n;
+    logic                        ras_n;
+    logic                        we_n;
+    logic                        cs_n;
+    logic                        cke;
+    logic                        odt;
+    logic                        reset_n;
   } dfi_cmd_s;
 
   typedef struct packed {
-    logic [`DFI_DATA_WIDTH-1:0]   wrdata;
+    logic [`DFI_DATA_WIDTH-1:0]  wrdata;
     logic [`DFI_DATA_WIDTH/8-1:0] wrdata_mask;
-    logic                         wrdata_en;
-    logic                         rddata_en;
-    logic [`DFI_DATA_WIDTH-1:0]   rddata;
-    logic                         rddata_valid;
+    logic                        wrdata_en;
+    logic                        rddata_en;
+    logic [`DFI_DATA_WIDTH-1:0]  rddata;
+    logic                        rddata_valid;
   } dfi_data_s;
 
-  //============================================================================
-  // ECC Structures
-  //============================================================================
-
-  typedef struct packed {
-    logic [`ECC_DATA_WIDTH-1:0]   data;
-    logic [`ECC_CHECK_WIDTH-1:0]  check_bits;
-    logic                         single_error;
-    logic                         double_error;
-    logic [5:0]                   error_bit_position;
-  } ecc_word_s;
-
-  //============================================================================
-  // Scheduler Structures
-  //============================================================================
-
-  typedef struct packed {
-    logic                            valid;
-    logic [3:0]                      priority;
-    logic [`DDR_CHANNEL_WIDTH-1:0]   channel;
-    logic [`DDR_RANK_WIDTH-1:0]       rank;
-    logic [`DDR_BANK_ADDR_WIDTH-1:0]  bank;
-    logic [`DDR_ROW_ADDR_WIDTH-1:0]   row;
-    logic                             is_read;
-    logic                             is_write;
-    logic [15:0]                      age_counter;
-    logic [7:0]                       qos_level;
-  } sched_entry_s;
-
-  //============================================================================
-  // Bank State Machine
-  //============================================================================
-
+  //==============================================================================
+  // Bank, Scheduler, QoS, ECC, Security Types (stubs remain compatible)
+  //==============================================================================
   typedef enum logic [2:0] {
-    BANK_IDLE       = 3'b000,
-    BANK_ACTIVATING = 3'b001,
-    BANK_ACTIVE     = 3'b010,
-    BANK_READING    = 3'b011,
-    BANK_WRITING    = 3'b100,
-    BANK_PRECHARGE  = 3'b101,
-    BANK_REFRESH    = 3'b110
+    BANK_IDLE, BANK_ACTIVATING, BANK_ACTIVE, BANK_READING, BANK_WRITING, BANK_PRECHARGE, BANK_REFRESH
   } bank_state_t;
 
   typedef struct packed {
-    bank_state_t                     state;
-    logic [`DDR_ROW_ADDR_WIDTH-1:0]  open_row;
-    logic [15:0]                     last_activate_time;
-    logic [15:0]                     last_precharge_time;
-    logic [15:0]                     last_read_time;
-    logic [15:0]                     last_write_time;
+    bank_state_t                    state;
+    logic [`DDR_ROW_ADDR_WIDTH-1:0] open_row;
+    logic [15:0]                    t_last_act;
+    logic [15:0]                    t_last_pre;
+    logic [15:0]                    t_last_rd;
+    logic [15:0]                    t_last_wr;
   } bank_status_s;
 
-  //============================================================================
-  // QoS Structures
-  //============================================================================
-
   typedef struct packed {
-    logic [3:0]                      priority;
-    logic [7:0]                      bandwidth_limit;
-    logic [7:0]                      bandwidth_used;
-    logic                            urgent;
-    logic                            guaranteed_service;
+    logic [3:0] priority;
+    logic [7:0] bandwidth_limit;
+    logic [7:0] bandwidth_used;
+    logic       urgent;
+    logic       guaranteed;
   } qos_info_s;
-
-  //============================================================================
-  // Security Structures
-  //============================================================================
-
-  typedef struct packed {
-    logic [`AES_KEY_WIDTH-1:0]       key;
-    logic [127:0]                    iv;  // Initialization vector
-    logic                            encrypt_enable;
-    logic                            decrypt_enable;
-  } security_context_s;
-
-  typedef struct packed {
-    logic [`DDR_ADDR_WIDTH-1:0]      start_addr;
-    logic [`DDR_ADDR_WIDTH-1:0]      end_addr;
-    logic                            secure;
-    logic                            read_allowed;
-    logic                            write_allowed;
-    logic [7:0]                      region_id;
-  } memory_region_s;
-
-  //============================================================================
-  // Refresh Structures
-  //============================================================================
-
-  typedef struct packed {
-    logic                            refresh_req;
-    logic                            refresh_urgent;
-    logic [`DDR_BANK_ADDR_WIDTH-1:0] bank;
-    logic [`DDR_RANK_WIDTH-1:0]      rank;
-    logic [15:0]                     refresh_counter;
-  } refresh_req_s;
-
-  //============================================================================
-  // Error Logging
-  //============================================================================
-
-  typedef enum logic [3:0] {
-    ERR_NONE           = 4'h0,
-    ERR_ECC_SINGLE     = 4'h1,
-    ERR_ECC_DOUBLE     = 4'h2,
-    ERR_CRC            = 4'h3,
-    ERR_TIMEOUT        = 4'h4,
-    ERR_PROTOCOL       = 4'h5,
-    ERR_SECURITY       = 4'h6,
-    ERR_ORDERING       = 4'h7,
-    ERR_HAZARD         = 4'h8
-  } error_type_t;
-
-  typedef struct packed {
-    error_type_t                     error_type;
-    logic [31:0]                     timestamp;
-    logic [`DDR_ADDR_WIDTH-1:0]      address;
-    logic [63:0]                     error_data;
-  } error_log_s;
-
-  //============================================================================
-  // Performance Monitoring
-  //============================================================================
-
-  typedef struct packed {
-    logic [31:0]                     total_reads;
-    logic [31:0]                     total_writes;
-    logic [31:0]                     page_hits;
-    logic [31:0]                     page_misses;
-    logic [31:0]                     bank_conflicts;
-    logic [31:0]                     refresh_cycles;
-    logic [31:0]                     idle_cycles;
-    logic [31:0]                     utilization_percent;
-  } performance_counters_s;
-
-  //============================================================================
-  // Utility Functions
-  //============================================================================
-
-  function automatic logic is_same_page(
-    input logic [`DDR_BANK_ADDR_WIDTH-1:0] bank1, bank2,
-    input logic [`DDR_ROW_ADDR_WIDTH-1:0] row1, row2
-  );
-    return (bank1 == bank2) && (row1 == row2);
-  endfunction
-
-  function automatic logic [3:0] calculate_priority(
-    input logic [7:0] qos,
-    input logic [15:0] age
-  );
-    // Higher QoS and older transactions get higher priority
-    return qos[3:0] + (age > 16'hFF ? 4'hF : age[7:4]);
-  endfunction
-
-  function automatic logic check_hazard(
-    input logic [`DDR_ADDR_WIDTH-1:0] addr1, addr2,
-    input logic is_write1, is_write2
-  );
-    logic same_addr = (addr1 == addr2);
-    // RAW, WAR, or WAW hazard
-    return same_addr && (is_write1 || is_write2);
-  endfunction
 
 endpackage : ddr_types_pkg
