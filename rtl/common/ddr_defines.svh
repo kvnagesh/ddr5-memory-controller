@@ -1,192 +1,167 @@
 //******************************************************************************
 // File: ddr_defines.svh
-// Description: Global defines and parameters for DDR5/LPDDR5X Memory Controller
+// Description: Global defines, parameters, and mode/timing hooks for DDR5/LPDDR5/LPDDR5X controller up to 8533 Mb/s
 // Author: Production RTL Team
 // Date: 2025-11-03
 //******************************************************************************
-
 `ifndef DDR_DEFINES_SVH
 `define DDR_DEFINES_SVH
 
 //==============================================================================
-// Memory Type Selection
+// Memory Standards and Mode Selection
 //==============================================================================
-`define DDR5_ENABLED
-// `define LPDDR5X_ENABLED  // Uncomment for LPDDR5X support
+// MEM_STD selects the active protocol: 0=DDR5, 1=LPDDR5, 2=LPDDR5X
+`define MEM_STD_DDR5     0
+`define MEM_STD_LPDDR5   1
+`define MEM_STD_LPDDR5X  2
 
-//==============================================================================
-// Memory Configuration Parameters
-//==============================================================================
+// Default to DDR5; override via parameters or synthesis define
+`ifndef MEM_STD_DEFAULT
+  `define MEM_STD_DEFAULT `MEM_STD_DDR5
+`endif
 
-// Memory Organization
-`define DDR_DATA_WIDTH       512      // Data bus width (bits)
-`define DDR_ADDR_WIDTH       34       // Physical address width
-`define DDR_BANK_ADDR_WIDTH  6        // Bank address width (DDR5: 6 bits for 32 banks)
-`define DDR_ROW_ADDR_WIDTH   18       // Row address width
-`define DDR_COL_ADDR_WIDTH   10       // Column address width
-`define DDR_CHANNEL_WIDTH    2        // Number of channels (log2)
-`define DDR_RANK_WIDTH       2        // Number of ranks per channel (log2)
-
-// Burst and Transfer
-`define DDR_BURST_LENGTH     16       // BL16 for DDR5
-`define DDR_PREFETCH         16       // Prefetch depth
-`define DDR_DQ_WIDTH         64       // DQ bits per module
-`define DDR_DQS_WIDTH        8        // DQS strobes
-`define DDR_DM_WIDTH         8        // Data mask signals
-
-// ECC Configuration
-`define ECC_DATA_WIDTH       64       // Data width for ECC
-`define ECC_CHECK_WIDTH      8        // Check bits (SECDED)
-`define ECC_TOTAL_WIDTH      72       // Total width with ECC
+// Convenience feature switches auto-derived from MEM_STD
+`define FEAT_DDR5    (`MEM_STD_DEFAULT==`MEM_STD_DDR5)
+`define FEAT_LP5     (`MEM_STD_DEFAULT==`MEM_STD_LPDDR5)
+`define FEAT_LP5X    (`MEM_STD_DEFAULT==`MEM_STD_LPDDR5X)
 
 //==============================================================================
-// Timing Parameters (in clock cycles) - DDR5-5600
+// Global Speed/Rate Parameters (max up to 8533 Mb/s)
 //==============================================================================
+// Data rate MT/s (Mb/s per pin). Example bins: 4800, 5600, 6400, 7200, 8000, 8533
+`ifndef DDR_DATA_RATE_MT
+  `define DDR_DATA_RATE_MT 8533
+`endif
 
-`define tCK                  357      // Clock period (ps) for DDR5-5600
-`define tRCD                 16       // RAS to CAS delay
-`define tRP                  16       // Row precharge time
-`define tRAS                 42       // Row active time
-`define tRC                  58       // Row cycle time
-`define tRRD_L               6        // Row to row delay (same bank group)
-`define tRRD_S               4        // Row to row delay (different bank group)
-`define tCCD_L               8        // CAS to CAS delay (same bank group)
-`define tCCD_S               4        // CAS to CAS delay (different bank group)
-`define tWR                  24       // Write recovery time
-`define tRTP                 12       // Read to precharge
-`define tWTR_L               12       // Write to read (same bank group)
-`define tWTR_S               4        // Write to read (different bank group)
-`define tFAW                 16       // Four activate window
-`define tRFC                 295      // Refresh cycle time (per bank)
-`define tREFI                9360     // Refresh interval
-`define tXS                  304      // Exit self-refresh to command
+// Controller/PHY clock ratios
+// DFI frequency ratio N: 1=1:1, 2=1:2, 4=1:4 (commonly 1:2 or 1:4 at high speed)
+`ifndef DFI_FREQ_RATIO
+  `define DFI_FREQ_RATIO 2
+`endif
 
 //==============================================================================
-// Command Encoding
+// Memory Organization (may be overridden per design/top)
 //==============================================================================
-
-// DDR5 Command Opcodes
-`define CMD_NOP              4'b0111
-`define CMD_READ             4'b0101
-`define CMD_WRITE            4'b0100
-`define CMD_ACTIVATE         4'b0001
-`define CMD_PRECHARGE        4'b0010
-`define CMD_REFRESH          4'b1000
-`define CMD_SELF_REFRESH     4'b1001
-`define CMD_POWER_DOWN       4'b1010
-`define CMD_MRS              4'b0000  // Mode Register Set
-`define CMD_ZQC              4'b1011  // ZQ Calibration
-
-//==============================================================================
-// Mode Register Addresses
-//==============================================================================
-
-`define MR0_ADDR             3'h0
-`define MR1_ADDR             3'h1
-`define MR2_ADDR             3'h2
-`define MR3_ADDR             3'h3
-`define MR4_ADDR             3'h4
-`define MR5_ADDR             3'h5
-`define MR6_ADDR             3'h6
-`define MR7_ADDR             3'h7
-
-//==============================================================================
-// AXI4 Configuration
-//==============================================================================
-
-`define AXI_ADDR_WIDTH       `DDR_ADDR_WIDTH
-`define AXI_DATA_WIDTH       `DDR_DATA_WIDTH
-`define AXI_ID_WIDTH         8
-`define AXI_USER_WIDTH       4
-`define AXI_STRB_WIDTH       (`AXI_DATA_WIDTH/8)
-
-// AXI Response Codes
-`define AXI_RESP_OKAY        2'b00
-`define AXI_RESP_EXOKAY      2'b01
-`define AXI_RESP_SLVERR      2'b10
-`define AXI_RESP_DECERR      2'b11
-
-// AXI Burst Types
-`define AXI_BURST_FIXED      2'b00
-`define AXI_BURST_INCR       2'b01
-`define AXI_BURST_WRAP       2'b10
+`ifndef DDR_DATA_WIDTH      // Controller internal data path width (bits)
+  `define DDR_DATA_WIDTH 512
+`endif
+`ifndef DDR_DQ_WIDTH        // External DRAM DQ per channel
+  `define DDR_DQ_WIDTH 64
+`endif
+`ifndef DDR_DQS_WIDTH       // DQS pairs per channel
+  `define DDR_DQS_WIDTH 8
+`endif
+`ifndef DDR_DM_WIDTH        // DM/DBI width (if used)
+  `define DDR_DM_WIDTH 8
+`endif
+`ifndef DDR_ADDR_WIDTH      // Physical address width (row+col+bank portions handled in mapper)
+  `define DDR_ADDR_WIDTH 34
+`endif
+`ifndef DDR_BANK_ADDR_WIDTH // Bank address bits (DDR5 uses Bank/BankGroup)
+  `define DDR_BANK_ADDR_WIDTH 6
+`endif
+`ifndef DDR_ROW_ADDR_WIDTH
+  `define DDR_ROW_ADDR_WIDTH 18
+`endif
+`ifndef DDR_COL_ADDR_WIDTH
+  `define DDR_COL_ADDR_WIDTH 10
+`endif
+`ifndef DDR_CHANNEL_LOG2
+  `define DDR_CHANNEL_LOG2 1  // 2 channels default
+`endif
+`ifndef DDR_RANK_LOG2
+  `define DDR_RANK_LOG2 1     // 2 ranks default
+`endif
 
 //==============================================================================
-// DFI (DDR PHY Interface) Configuration
+// Burst/Prefetch and Protocol Variants
 //==============================================================================
+// DDR5 uses BL16. LPDDR5/5X uses BL16/BL32 (write burst may be half-rate dependent)
+`define DDR5_BURST_LENGTH   16
+`define LP5_BURST_LENGTH    16
+`define LP5X_BURST_LENGTH   16  // BL32 supported via WRPRE setting; controller issues two BL16 beats
 
-`define DFI_ADDR_WIDTH       18
-`define DFI_BANK_WIDTH       6
-`define DFI_DATA_WIDTH       `DDR_DQ_WIDTH
-`define DFI_FREQ_RATIO       2        // 2:1 or 4:1 frequency ratio
-`define DFI_PHASES           4        // Number of DFI phases
+// Effective burst length selected by MEM_STD
+`define DDR_BURST_LENGTH ( `FEAT_DDR5  ? `DDR5_BURST_LENGTH : \
+                           `FEAT_LP5  ? `LP5_BURST_LENGTH  : \
+                                         `LP5X_BURST_LENGTH )
 
-//==============================================================================
-// Queue Depths
-//==============================================================================
-
-`define CMD_QUEUE_DEPTH      32       // Command queue depth
-`define READ_QUEUE_DEPTH     16       // Read transaction queue
-`define WRITE_QUEUE_DEPTH    16       // Write transaction queue
-`define REFRESH_QUEUE_DEPTH  8        // Refresh command queue
+// Prefetch depth (x16 prefetch typical for DDR5/LPDDR5/5X)
+`define DDR_PREFETCH 16
 
 //==============================================================================
-// QoS Configuration
+// DFI/PHY Laneing and Training Feature Flags
 //==============================================================================
-
-`define QOS_LEVELS           4        // Number of QoS priority levels
-`define QOS_ID_WIDTH         2        // QoS identifier width
-`define BANDWIDTH_BUCKETS    8        // Traffic shaping buckets
-
-//==============================================================================
-// Security Configuration
-//==============================================================================
-
-`define AES_KEY_WIDTH        256      // AES-256 encryption
-`define AES_BLOCK_SIZE       128      // AES block size
-`define SECURE_REGIONS       16       // Number of secure memory regions
+`define FEAT_WR_LEVELING      1  // DDR5 write leveling support
+`define FEAT_RD_GATING        1  // Read DQS gating/training
+`define FEAT_VREF_TRAIN       1  // MR-controlled VrefDQ training hooks
+`define FEAT_CA_PARITY        1  // DDR5 CA parity support
+`define FEAT_CMD_ADDR_MUX     1  // CA muxing for LPDDR5/5X
+`define FEAT_DM_DBI           1  // Data Mask / DBI support
+`define FEAT_DFE_RX           1  // Hook for PHY DFE at high speeds
 
 //==============================================================================
-// Error Detection and Reporting
+// Timing Parameterization (ns/ck abstract). Concrete values set in types pkg.
+// These defines provide names; actual numbers shall be parameters in ddr_types_pkg
 //==============================================================================
+`define TCK_PS           0
+`define TRCD_CK          0
+`define TRP_CK           0
+`define TRAS_CK          0
+`define TRC_CK           0
+`define TRFC_NS          0
+`define TREFI_US         0
+`define TWR_CK           0
+`define TWTR_S_CK        0
+`define TWTR_L_CK        0
+`define TRTP_CK          0
+`define TRRD_S_CK        0
+`define TRRD_L_CK        0
+`define TCCD_S_CK        0
+`define TCCD_L_CK        0
+`define TMOD_CK          0
+`define TMRD_CK          0
+`define TFAW_CK          0
+`define TCCD_WR_CK       0
+`define TRPRE_CK         0
+`define TWPRE_CK         0
+`define TDQSCK_PS        0
+`define TDQSCK_VAR_PS    0
 
-`define ERROR_LOG_DEPTH      16       // Error logging FIFO depth
-`define ERROR_COUNTER_WIDTH  16       // Error counter width
+// The actual timing values per speed bin and per standard are defined in ddr_types_pkg.sv
 
 //==============================================================================
-// Debug and Performance Monitoring
+// Mode Register Encodings (abstract bitfields; concrete MR values in types pkg)
 //==============================================================================
-
-`define PERF_COUNTER_WIDTH   32       // Performance counter width
-`define NUM_PERF_COUNTERS    8        // Number of performance counters
+`define MR_ADDR_WIDTH  16
+`define MR_DATA_WIDTH  32
 
 //==============================================================================
-// Derived Parameters (Do not modify)
+// Command/State Machine Opcodes (abstract)
 //==============================================================================
-
-`define NUM_CHANNELS         (1 << `DDR_CHANNEL_WIDTH)
-`define NUM_RANKS            (1 << `DDR_RANK_WIDTH)
-`define NUM_BANKS            (1 << `DDR_BANK_ADDR_WIDTH)
-`define PAGE_SIZE            (1 << `DDR_COL_ADDR_WIDTH)
+`define CMD_NOP     4'd0
+`define CMD_MRW     4'd1
+`define CMD_PRE     4'd2
+`define CMD_ACT     4'd3
+`define CMD_RD      4'd4
+`define CMD_WR      4'd5
+`define CMD_REF     4'd6
+`define CMD_ZQC     4'd7
+`define CMD_SREF    4'd8
+`define CMD_PD      4'd9
 
 //==============================================================================
 // Utility Macros
 //==============================================================================
-
-`define MAX(a, b)            (((a) > (b)) ? (a) : (b))
-`define MIN(a, b)            (((a) < (b)) ? (a) : (b))
-`define CLOG2(x)             $clog2(x)
+`define MAX(a,b) ((a)>(b)?(a):(b))
+`define MIN(a,b) ((a)<(b)?(a):(b))
 
 //==============================================================================
-// Simulation vs. Synthesis
+// Notes:
+// - This header centralizes feature flags and default widths. Concrete timing and
+//   MR encodings live in ddr_types_pkg.sv to allow param-based selection at build.
+// - Controllers should gate behavior on MEM_STD to map protocol differences.
+// - PHY should honor DFI_FREQ_RATIO and expose training hooks enabled above.
 //==============================================================================
-
-`ifdef SIMULATION
-  `define ASSERT_ERROR(msg) $error(msg)
-  `define ASSERT_FATAL(msg) $fatal(1, msg)
-`else
-  `define ASSERT_ERROR(msg)
-  `define ASSERT_FATAL(msg)
-`endif
 
 `endif // DDR_DEFINES_SVH
